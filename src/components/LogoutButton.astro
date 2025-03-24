@@ -1,0 +1,15 @@
+---
+// src/components/LogoutButton.astro
+import { supabase } from '../utils/supabaseClient';
+
+const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+        alert(error.message);
+    } else {
+        window.location.href = '/'; // Redirect to home page after logout
+    }
+};
+---
+
+<button class="b" onClick={handleLogout}>Log out</button>

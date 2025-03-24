@@ -1,5 +1,6 @@
 ---
 import '../styles/utils.css';
+import AuthButtons from '../components/AuthButtons.astro';
 const { title } = Astro.props;
 ---
 
@@ -22,6 +23,7 @@ const { title } = Astro.props;
         </div>
         <nav class="mt-6 px-3">
           <a href="/" class="n">Dashboard</a>
+          
           <a href="/long-form" class="n">Long-form Book Writer</a>
           <a href="/ebook" class="n">E-book Writer</a>
           <a href="/guide" class="n">Writing Guider</a>

@@ -1,5 +1,6 @@
 node_modules/
 astro.config.mjs
+.env
 backend/.env
 backend/go.mod
 backend/go.sum

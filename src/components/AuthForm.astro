@@ -1,0 +1,164 @@
+---
+import { supabase } from '../utils/supabaseClient';
+
+// Define types
+type AuthActionType = 'login' | 'signup';
+
+// Initial values
+let initialAuthAction: AuthActionType = 'login';
+let email = "";
+let password = "";
+---
+
+<div class="c d relative">
+  <h2 class="t1 g mb-8" id="authTitle">Login</h2>
+  <form class="f">
+    <div>
+      <label class="l">Email</label>
+      <input type="email" class="i" required id="emailInput">
+    </div>
+    <div>
+      <label class="l">Password</label>
+      <input type="password" class="i" required id="passwordInput">
+    </div>
+    <button type="button" class="b" id="submitBtn">
+      Log In
+    </button>
+    <div class="mb-4">
+    <button class="b opacity-50" id="signupBtn">Sign Up</button>
+  </div>
+  </form>
+</div>
+
+<!-- Modal overlay for loading -->
+<div 
+  id="loadingModal"
+  class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50"
+>
+  <div class="bg-gray-800 rounded p-6 text-gray-100 max-w-sm w-full">
+    <p class="mb-4">Processing, please wait...</p>
+    <div class="spinner mx-auto"></div>
+  </div>
+</div>
+
+<style>
+  .spinner {
+    border: 4px solid rgba(0, 0, 0, 0.1);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border-left-color: #09f;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  /* Utility to show/hide modal */
+  .hidden {
+    display: none;
+  }
+  .disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+</style>
+
+<script>
+  let authAction = 'login';
+  
+  // Get DOM elements
+  const loginBtn = document.getElementById('loginBtn');
+  const signupBtn = document.getElementById('signupBtn');
+  const authTitle = document.getElementById('authTitle');
+  const submitBtn = document.getElementById('submitBtn');
+  const emailInput = document.getElementById('emailInput') as HTMLInputElement;
+  const passwordInput = document.getElementById('passwordInput') as HTMLInputElement;
+  const loadingModal = document.getElementById('loadingModal');
+  
+  // Add event listeners
+  loginBtn?.addEventListener('click', () => handleAuthActionChange('login'));
+  signupBtn?.addEventListener('click', () => handleAuthActionChange('signup'));
+  submitBtn?.addEventListener('click', () => {
+    if (authAction === 'login') {
+      handleLogin();
+    } else {
+      handleSignup();
+    }
+  });
+  
+  function handleAuthActionChange(action: 'login' | 'signup') {
+    authAction = action;
+    
+    // Update UI based on action
+    if (action === 'login') {
+      loginBtn?.classList.replace('opacity-50', 'opacity-100');
+      signupBtn?.classList.replace('opacity-100', 'opacity-50');
+      if (authTitle) authTitle.textContent = 'Login';
+      if (submitBtn) submitBtn.textContent = 'Log In';
+    } else {
+      loginBtn?.classList.replace('opacity-100', 'opacity-50');
+      signupBtn?.classList.replace('opacity-50', 'opacity-100');
+      if (authTitle) authTitle.textContent = 'Sign Up';
+      if (submitBtn) submitBtn.textContent = 'Sign Up';
+    }
+  }
+  
+  async function handleLogin() {
+    const originalText = submitBtn?.textContent || 'Log In';
+    if (submitBtn) {
+      submitBtn.classList.add('disabled');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Processing...';
+    }
+    loadingModal?.classList.remove('hidden');
+    try {
+      const { error } = await window.supabase.auth.signInWithPassword({
+        email: emailInput?.value || '',
+        password: passwordInput?.value || '',
+      });
+      if (error) {
+        alert(error.message);
+      } else {
+        // Redirect or update UI on successful login
+        window.location.href = '/';
+      }
+    } finally {
+      loadingModal?.classList.add('hidden');
+      if (submitBtn) {
+        submitBtn.classList.remove('disabled');
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
+      }
+    }
+  }
+  
+  async function handleSignup() {
+    const originalText = submitBtn?.textContent || 'Sign Up';
+    if (submitBtn) {
+      submitBtn.classList.add('disabled');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Processing...';
+    }
+    loadingModal?.classList.remove('hidden');
+    try {
+      const { error } = await window.supabase.auth.signUp({
+        email: emailInput?.value || '',
+        password: passwordInput?.value || '',
+      });
+      if (error) {
+        alert(error.message);
+      } else {
+        alert("Signup successful! Please check your email to verify your account.");
+        handleAuthActionChange('login');
+      }
+    } finally {
+      loadingModal?.classList.add('hidden');
+      if (submitBtn) {
+        submitBtn.classList.remove('disabled');
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
+      }
+    }
+  }
+</script>
