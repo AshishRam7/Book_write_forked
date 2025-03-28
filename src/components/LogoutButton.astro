@@ -1,15 +1,24 @@
 ---
 // src/components/LogoutButton.astro
-import { supabase } from '../utils/supabaseClient';
-
-const handleLogout = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-        alert(error.message);
-    } else {
-        window.location.href = '/'; // Redirect to home page after logout
-    }
-};
+// No need to import pb directly if using inline script, but good practice
+// import { pb } from '../utils/pocketbase';
 ---
 
-<button class="b" onClick={handleLogout}>Log out</button>
+<button class="b" id="logoutBtn">Log out</button>
+
+<script>
+  import { pb } from '../utils/pocketbase'; // Make sure pb is available
+
+  const logoutBtn = document.getElementById('logoutBtn');
+
+  logoutBtn?.addEventListener('click', async () => {
+    try {
+      pb.authStore.clear();
+      // Redirect to home page or login page after logout
+      window.location.href = '/login'; // Or '/' if you prefer
+    } catch (error) {
+      console.error('Logout failed:', error);
+      alert('Logout failed. Please try again.');
+    }
+  });
+</script>

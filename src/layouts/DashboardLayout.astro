@@ -1,7 +1,16 @@
 ---
+// src/layouts/DashboardLayout.astro
 import '../styles/utils.css';
-import AuthButtons from '../components/AuthButtons.astro';
+import LogoutButton from '../components/LogoutButton.astro'; // Changed from AuthButtons
 const { title } = Astro.props;
+
+// Middleware handles redirection, but we can check validity for conditional rendering
+const isLoggedIn = Astro.locals.pb?.authStore?.isValid ?? false;
+
+// Redirect handled by middleware, but as a fallback/safety:
+// if (!isLoggedIn && !Astro.url.pathname.startsWith('/api')) {
+//   return Astro.redirect('/login');
+// }
 ---
 
 <!DOCTYPE html>
@@ -13,24 +22,22 @@ const { title } = Astro.props;
     <meta name="generator" content={Astro.generator} />
     <title>{title} - Goriber Lekhok</title>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Inject PocketBase client script for components needing it -->
+    <script src="/src/utils/pocketbase.js" type="module"></script>
   </head>
   <body class="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-gray-100 font-['Space_Grotesk']">
     <div class="min-h-screen flex relative overflow-hidden">
       <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_-20%,#3b82f6,transparent_70%)] opacity-20"></div>
       <aside class="w-64 glass border-r border-gray-700/50 z-10">
-        <div class="p-6">
+        <div class="p-6 flex justify-between items-center">
           <h1 class="t1 g">Goriber Lekhok</h1>
+          <!-- Conditionally show Logout button -->
+          {isLoggedIn && <LogoutButton />}
         </div>
         <nav class="mt-6 px-3">
           <a href="/" class="n">Dashboard</a>
-          
           <a href="/long-form" class="n">Long-form Book Writer</a>
-          <a href="/ebook" class="n">E-book Writer</a>
-          <a href="/guide" class="n">Writing Guider</a>
-          <a href="/creator" class="n">E-Book Creator</a>
-          <a href="/chapter" class="n">Chapter Creator</a>
-          <a href="/offers" class="n">Gifts and Offers</a>
-          <a href="/tickets" class="n">Support Tickets</a>
+          {/* ... other links ... */}
           <a href="/contact" class="n">Contact</a>
         </nav>
       </aside>

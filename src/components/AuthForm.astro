@@ -1,18 +1,15 @@
 ---
-import { supabase } from '../utils/supabaseClient';
+// src/components/AuthForm.astro
+import { pb } from '../utils/pocketbase'; // Import the PocketBase client
 
-// Define types
-type AuthActionType = 'login' | 'signup';
-
-// Initial values
-let initialAuthAction: AuthActionType = 'login';
+// Initial values (can be removed if not used directly in template)
 let email = "";
 let password = "";
 ---
 
 <div class="c d relative">
   <h2 class="t1 g mb-8" id="authTitle">Login</h2>
-  <form class="f">
+  <form class="f" onsubmit="event.preventDefault();"> {/* Prevent default form submission */}
     <div>
       <label class="l">Email</label>
       <input type="email" class="i" required id="emailInput">
@@ -21,27 +18,39 @@ let password = "";
       <label class="l">Password</label>
       <input type="password" class="i" required id="passwordInput">
     </div>
-    <button type="button" class="b" id="submitBtn">
-      Log In
-    </button>
-    <div class="mb-4">
-    <button class="b opacity-50" id="signupBtn">Sign Up</button>
-  </div>
+    <div class="flex space-x-4 mt-6">
+      <button type="button" class="b flex-1" id="submitBtn" data-action="login">
+        Log In
+      </button>
+      <button type="button" class="b flex-1 opacity-70 hover:opacity-100" id="signupBtn" data-action="signup">
+        Sign Up
+      </button>
+    </div>
+    <p class="text-center text-gray-400 my-4">or continue with</p>
+    <div class="flex space-x-4">
+       <button type="button" class="b flex-1 bg-red-600 hover:bg-red-700 from-red-600 to-red-700" id="googleBtn">
+        Google
+      </button>
+       <button type="button" class="b flex-1 bg-blue-600 hover:bg-blue-700 from-blue-600 to-blue-700" id="microsoftBtn">
+        Microsoft
+      </button>
+    </div>
   </form>
 </div>
 
 <!-- Modal overlay for loading -->
-<div 
+<div
   id="loadingModal"
   class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50"
 >
-  <div class="bg-gray-800 rounded p-6 text-gray-100 max-w-sm w-full">
-    <p class="mb-4">Processing, please wait...</p>
+  <div class="bg-gray-800 rounded p-6 text-gray-100 max-w-sm w-full text-center">
+    <p class="mb-4" id="loadingText">Processing, please wait...</p>
     <div class="spinner mx-auto"></div>
   </div>
 </div>
 
 <style>
+  /* Spinner styles (keep existing) */
   .spinner {
     border: 4px solid rgba(0, 0, 0, 0.1);
     width: 36px;
@@ -54,111 +63,153 @@ let password = "";
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
   }
-  /* Utility to show/hide modal */
-  .hidden {
-    display: none;
-  }
-  .disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  .hidden { display: none; }
+  .disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
 
 <script>
-  let authAction = 'login';
-  
+  import { pb } from '../utils/pocketbase'; // Ensure pb is accessible
+
   // Get DOM elements
-  const loginBtn = document.getElementById('loginBtn');
-  const signupBtn = document.getElementById('signupBtn');
   const authTitle = document.getElementById('authTitle');
   const submitBtn = document.getElementById('submitBtn');
-  const emailInput = document.getElementById('emailInput') as HTMLInputElement;
-  const passwordInput = document.getElementById('passwordInput') as HTMLInputElement;
+  const signupBtn = document.getElementById('signupBtn');
+  const googleBtn = document.getElementById('googleBtn');
+  const microsoftBtn = document.getElementById('microsoftBtn');
+  const emailInput = document.getElementById('emailInput');
+  const passwordInput = document.getElementById('passwordInput');
   const loadingModal = document.getElementById('loadingModal');
-  
-  // Add event listeners
-  loginBtn?.addEventListener('click', () => handleAuthActionChange('login'));
-  signupBtn?.addEventListener('click', () => handleAuthActionChange('signup'));
-  submitBtn?.addEventListener('click', () => {
-    if (authAction === 'login') {
-      handleLogin();
-    } else {
-      handleSignup();
-    }
-  });
-  
-  function handleAuthActionChange(action: 'login' | 'signup') {
-    authAction = action;
-    
-    // Update UI based on action
-    if (action === 'login') {
-      loginBtn?.classList.replace('opacity-50', 'opacity-100');
-      signupBtn?.classList.replace('opacity-100', 'opacity-50');
-      if (authTitle) authTitle.textContent = 'Login';
-      if (submitBtn) submitBtn.textContent = 'Log In';
-    } else {
-      loginBtn?.classList.replace('opacity-100', 'opacity-50');
-      signupBtn?.classList.replace('opacity-50', 'opacity-100');
-      if (authTitle) authTitle.textContent = 'Sign Up';
-      if (submitBtn) submitBtn.textContent = 'Sign Up';
-    }
-  }
-  
-  async function handleLogin() {
-    const originalText = submitBtn?.textContent || 'Log In';
-    if (submitBtn) {
-      submitBtn.classList.add('disabled');
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Processing...';
-    }
+  const loadingText = document.getElementById('loadingText');
+
+  // State
+  let currentAction = 'login'; // 'login' or 'signup'
+
+  // --- Helper Functions ---
+  function showLoading(text = 'Processing, please wait...') {
+    if (loadingText) loadingText.textContent = text;
     loadingModal?.classList.remove('hidden');
+    setFormDisabled(true);
+  }
+
+  function hideLoading() {
+    loadingModal?.classList.add('hidden');
+    setFormDisabled(false);
+  }
+
+  function setFormDisabled(disabled) {
+    const buttons = [submitBtn, signupBtn, googleBtn, microsoftBtn];
+    buttons.forEach(btn => {
+      if (btn) {
+        btn.disabled = disabled;
+        if (disabled) btn.classList.add('disabled');
+        else btn.classList.remove('disabled');
+      }
+    });
+    if (emailInput) emailInput.disabled = disabled;
+    if (passwordInput) passwordInput.disabled = disabled;
+  }
+
+  function updateUIForAction(action) {
+    currentAction = action;
+    if (authTitle) authTitle.textContent = action === 'login' ? 'Login' : 'Sign Up';
+    if (submitBtn) {
+      submitBtn.textContent = action === 'login' ? 'Log In' : 'Sign Up';
+      submitBtn.dataset.action = action; // Store action in data attribute
+      submitBtn.classList.toggle('opacity-70', action === 'signup');
+      submitBtn.classList.toggle('hover:opacity-100', action === 'signup');
+    }
+     if (signupBtn) {
+       signupBtn.classList.toggle('opacity-70', action === 'login');
+       signupBtn.classList.toggle('hover:opacity-100', action === 'login');
+     }
+  }
+
+  // --- Event Handlers ---
+  async function handleAuthSubmit() {
+    const email = emailInput?.value || '';
+    const password = passwordInput?.value || '';
+
+    if (!email || !password) {
+      alert("Email and password are required.");
+      return;
+    }
+
+    showLoading(currentAction === 'login' ? 'Logging in...' : 'Signing up...');
+
     try {
-      const { error } = await window.supabase.auth.signInWithPassword({
-        email: emailInput?.value || '',
-        password: passwordInput?.value || '',
-      });
-      if (error) {
-        alert(error.message);
-      } else {
-        // Redirect or update UI on successful login
+      if (currentAction === 'login') {
+        await pb.collection('users').authWithPassword(email, password);
+        // On successful login, PocketBase authStore is updated.
+        // The SSR middleware will handle cookie setting on next navigation/refresh.
+        // Redirect to dashboard
         window.location.href = '/';
-      }
-    } finally {
-      loadingModal?.classList.add('hidden');
-      if (submitBtn) {
-        submitBtn.classList.remove('disabled');
-        submitBtn.disabled = false;
-        submitBtn.textContent = originalText;
-      }
-    }
-  }
-  
-  async function handleSignup() {
-    const originalText = submitBtn?.textContent || 'Sign Up';
-    if (submitBtn) {
-      submitBtn.classList.add('disabled');
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Processing...';
-    }
-    loadingModal?.classList.remove('hidden');
-    try {
-      const { error } = await window.supabase.auth.signUp({
-        email: emailInput?.value || '',
-        password: passwordInput?.value || '',
-      });
-      if (error) {
-        alert(error.message);
       } else {
-        alert("Signup successful! Please check your email to verify your account.");
-        handleAuthActionChange('login');
+        // Sign up
+        const data = {
+            email: email,
+            password: password,
+            passwordConfirm: password, // PocketBase requires confirmation
+            // Add any other required fields for your 'users' collection here
+            // name: "Test User",
+        };
+        await pb.collection('users').create(data);
+        // Optionally: Request email verification after signup
+        // await pb.collection('users').requestVerification(email);
+        alert("Signup successful! Please check your email if verification is required. You can now log in.");
+        updateUIForAction('login'); // Switch back to login view
       }
+    } catch (error) {
+      console.error('Auth Error:', error);
+      // PocketBase errors often have a response object
+      const message = error.response?.message || error.message || 'An unknown error occurred.';
+      alert(`Error: ${message}`);
     } finally {
-      loadingModal?.classList.add('hidden');
-      if (submitBtn) {
-        submitBtn.classList.remove('disabled');
-        submitBtn.disabled = false;
-        submitBtn.textContent = originalText;
-      }
+      hideLoading();
     }
   }
+
+  async function handleOAuth(provider) {
+    console.log(`Attempting OAuth with provider: ${provider}`);
+    console.log("Checking pb object before OAuth call:", pb);
+    showLoading(`Redirecting to ${provider}...`);
+    try {
+      // ---> Try fetching auth methods first <---
+      console.log("Attempting to list auth methods...");
+      const authMethods = await pb.collection('users').listAuthMethods();
+      console.log("Available auth methods:", authMethods); // Check if providers are listed here
+
+      // Now attempt the OAuth call
+      console.log("Calling pb.collection('users').authWithOAuth2...");
+      const authData = await pb.collection('users').authWithOAuth2({ provider });
+      console.log("OAuth intermediate data (if any):", authData);
+      window.location.href = '/';
+    } catch (error) {
+       console.error(`OAuth Error with ${provider}:`, error);
+       // Check if the error now comes from listAuthMethods or still from authWithOAuth2
+       console.error("OAuth Error Response Data:", error.response);
+       const message = error.isAbort
+         ? "Popup window closed or blocked. Please disable popup blockers and try again."
+         : error.response?.message || error.message || `OAuth authentication failed with ${provider}.`;
+       alert(`Error: ${message}`);
+       hideLoading();
+    }
+}
+
+  // --- Attach Listeners ---
+  submitBtn?.addEventListener('click', () => {
+    updateUIForAction('login');
+    handleAuthSubmit();
+  });
+
+  signupBtn?.addEventListener('click', () => {
+    updateUIForAction('signup');
+    handleAuthSubmit(); // Trigger the same handler, it uses `currentAction`
+  });
+
+  googleBtn?.addEventListener('click', () => handleOAuth('google'));
+  microsoftBtn?.addEventListener('click', () => handleOAuth('microsoft')); // Assuming 'microsoft' is the provider name in PocketBase settings
+
+  // Initial setup
+  updateUIForAction('login');
+
 </script>

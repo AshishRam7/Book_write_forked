@@ -60,6 +60,7 @@ const { title = "Create Book" } = Astro.props;
 <script type="module">
 // 1) Import Marked from a CDN for client-side Markdown parsing.
 import { marked } from 'https://cdn.jsdelivr.net/npm/marked@4.3.0/lib/marked.esm.js';
+import { pb } from '../utils/pocketbase.js';
 
 // Elements
 const form = document.getElementById('bookForm');
@@ -105,9 +106,16 @@ function preprocessMarkdown(markdown) {
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
 
+  // Check if user is logged in before proceeding
+  if (!pb.authStore.isValid) {
+      alert("You must be logged in to create a book.");
+      window.location.href = '/login'; // Redirect if not logged in
+      return;
+  }
+
   // Show modal overlay
   loadingModal.classList.remove('hidden');
-  
+
   const formData = new FormData(form);
   const payload = {
     title: formData.get('title'),
@@ -116,57 +124,70 @@ form.addEventListener('submit', async (e) => {
   };
 
   try {
-    const res = await fetch('http://localhost:5000/generate-book', { 
+    // Get the auth token
+    const token = pb.authStore.token;
+    if (!token) {
+        throw new Error("Authentication token not found. Please log in again.");
+    }
+
+    // Make sure the backend URL is correct (consider using an env var)
+    const backendUrl = 'http://localhost:5000'; // Use the Go backend port
+
+    const res = await fetch(`${backendUrl}/generate-book`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        // Add the Authorization header with the PocketBase token
+        'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify(payload)
     });
-    
+
+    // Check for non-OK status codes from the backend explicitly
+     if (!res.ok) {
+        let errorData;
+        try {
+            errorData = await res.json(); // Try parsing JSON error from backend
+        } catch (_) {
+            // If parsing fails, use status text
+            throw new Error(`Request failed with status ${res.status}: ${res.statusText}`);
+        }
+         // Use error message from backend response if available
+         throw new Error(errorData.error || `Request failed with status ${res.status}`);
+    }
+
     const data = await res.json();
-    
+
     // Hide modal
     loadingModal.classList.add('hidden');
 
+    // NOTE: data.error check might be redundant if !res.ok is handled above
+    // Keep it if backend might return 200 OK with an error field
     if (data.error) {
-      // Replace the body content with an error message
-      document.body.innerHTML = `
-        <div class="p-8 max-w-3xl mx-auto">
-          <div class="flex justify-between items-center mb-4">
-            <button
-              onclick="location.href='/'"
-              class="px-4 py-2 bg-blue-500 text-white rounded"
-            >
-              Back
-            </button>
-            <h1 class="text-2xl font-bold">Error</h1>
-          </div>
-          <p class="text-red-400">Error: ${data.error}</p>
-        </div>
-      `;
+        // ... (existing error display logic) ...
+        document.body.innerHTML = `
+            <div class="p-8 max-w-3xl mx-auto">
+              {/* ... Back button and title ... */}
+              <p class="text-red-400">Error: ${data.error}</p>
+            </div>`;
     } else {
-      // Preprocess the text to find the main title and convert "Chapter" lines
-      let { mainTitle, body } = preprocessMarkdown(data.book);
-      // If none found, fallback to user's input
-      const finalTitle = mainTitle || payload.title;
-      
-      // Convert to HTML
-      const htmlContent = marked.parse(body);
+      // ... (existing success display logic using preprocessMarkdown and marked) ...
+       let { mainTitle, body } = preprocessMarkdown(data.book);
+       const finalTitle = mainTitle || payload.title;
+       const htmlContent = marked.parse(body);
 
-      // Overwrite the entire body with just the book content
-      document.body.innerHTML = `
-        <div class="p-8 max-w-3xl mx-auto">
-          <div class="flex justify-between items-center mb-8">
+       document.body.innerHTML = `
+        <div class="p-8 max-w-3xl mx-auto prose prose-invert lg:prose-xl">
+          <div class="flex justify-between items-center mb-8 not-prose">
             <button
               onclick="location.href='/'"
-              class="px-4 py-2 bg-blue-500 text-white rounded"
+              class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
             >
-              Back
+              ← Back to Dashboard
             </button>
-            <h1 class="text-2xl font-bold">${finalTitle}</h1>
+            <h1 class="text-2xl font-bold text-center flex-grow mx-4">${finalTitle}</h1>
           </div>
-          <article class="prose prose-invert prose-lg max-w-none leading-relaxed space-y-4">
+          <article class="mt-8">
             ${htmlContent}
           </article>
         </div>
@@ -176,15 +197,16 @@ form.addEventListener('submit', async (e) => {
     // Hide modal if fetch fails
     loadingModal.classList.add('hidden');
 
+    // ... (existing catch block error display) ...
     document.body.innerHTML = `
       <div class="p-8 max-w-3xl mx-auto">
         <div class="flex justify-between items-center mb-4">
-          <button
-            onclick="location.href='/'"
-            class="px-4 py-2 bg-blue-500 text-white rounded"
-          >
-            Back
-          </button>
+           <button
+              onclick="location.href='/'"
+              class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+             ← Back to Dashboard
+            </button>
           <h1 class="text-2xl font-bold">Error</h1>
         </div>
         <p class="text-red-400">Error: ${err.message}</p>
@@ -192,4 +214,5 @@ form.addEventListener('submit', async (e) => {
     `;
   }
 });
+
 </script>

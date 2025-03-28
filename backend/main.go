@@ -9,19 +9,23 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/joho/godotenv"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/golang-jwt/jwt/v5" // Import the JWT library
+	"github.com/joho/godotenv"
 )
+
+// ****** ADD THESE STRUCT DEFINITIONS BACK *****
 
 // BookRequest represents the request body for book generation.
 type BookRequest struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Chapters    int    `json:"chapters"`
-	ApiKey      string `json:"api_key,omitempty"` // API key is optional in the request.
+	// ApiKey is removed as we rely on JWT auth now
 }
 
 // QwenMessage represents a message in the Qwen API request.
@@ -47,6 +51,61 @@ type QwenResponse struct {
 	} `json:"output"`
 }
 
+// ****** END OF ADDED STRUCT DEFINITIONS ******
+
+
+// --- JWT Middleware ---
+func jwtMiddleware(c fiber.Ctx) error {
+	authHeader := c.Get("Authorization")
+	if authHeader == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Missing or malformed JWT"})
+	}
+
+	// Check if the header format is "Bearer token"
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Malformed Authorization header"})
+	}
+	tokenString := parts[1]
+
+	// Get the secret key from environment variable
+	jwtSecret := os.Getenv("POCKETBASE_TOKEN_SECRET")
+	if jwtSecret == "" {
+		log.Println("Error: POCKETBASE_TOKEN_SECRET environment variable not set")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Server configuration error"})
+	}
+
+	// Parse and validate the token
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// Don't forget to validate the alg is what you expect:
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(jwtSecret), nil
+	})
+
+	if err != nil {
+		log.Printf("JWT validation error: %v\n", err)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid or expired JWT"})
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		// Token is valid. You can optionally extract user info from claims
+		// and add it to the context if needed by downstream handlers.
+		// For example: c.Locals("userID", claims["id"])
+		// Check token type if necessary (e.g., ensure it's an 'auth' token)
+		tokenType, ok := claims["type"].(string) // Add type assertion check
+		if !ok || tokenType != "auth" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token type"})
+		}
+
+		log.Printf("JWT valid for user ID: %v\n", claims["id"]) // Example claim access
+		return c.Next()
+	}
+
+	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid JWT"})
+}
+
 func main() {
 	// Load environment variables from .env file.
 	if err := godotenv.Load(); err != nil {
@@ -55,7 +114,13 @@ func main() {
 
 	app := fiber.New()
 
-	app.Use(cors.New())
+	// --- FIX CORS ---
+	// Use comma-separated strings first, ensuring Authorization is included.
+	// If you still get the "cannot use...as []string" error, change to the commented-out slice version.
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: []string{"*"}, // Use slice
+		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization"}, // Use slice of strings
+	}))
 
 	app.Get("/", func(c fiber.Ctx) error {
 		return c.SendString("Hello There!")
@@ -68,25 +133,28 @@ func main() {
 		})
 	})
 
-	app.Post("/generate-book", generateBook)
+	// Apply JWT middleware ONLY to the protected route
+	app.Post("/generate-book", jwtMiddleware, generateBook)
 
 	// Get port from environment variable or use default.
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "3000"
+		port = "5000" // Default to 5000 to avoid conflict with PocketBase/Astro dev
 	}
 
+	fmt.Printf("Go backend listening on port %s\n", port)
 	log.Fatal(app.Listen(":" + port))
 }
 
+// --- generateBook function ---
 func generateBook(c fiber.Ctx) error {
-	// Parse the request body using BodyParser.
-	var req BookRequest
-    if err := c.Bind().Body(&req); err != nil {  // Corrected method call
-        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-            "error": "Invalid request body",
-        })
-    }
+	// Parse the request body using Bind().Body().
+	var req BookRequest // Now defined
+	if err := c.Bind().Body(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body: " + err.Error(),
+		})
+	}
 
 	// Validate the request.
 	if req.Title == "" || req.Description == "" || req.Chapters <= 0 {
@@ -95,15 +163,14 @@ func generateBook(c fiber.Ctx) error {
 		})
 	}
 
-	// Get the API key from the request or the environment variable.
-	apiKey := req.ApiKey
+
+	// Get the Qwen API key from the environment variable.
+	apiKey := os.Getenv("QWEN_API_KEY")
 	if apiKey == "" {
-		apiKey = os.Getenv("QWEN_API_KEY")
-		if apiKey == "" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "API key is required either in request or environment variable",
-			})
-		}
+		log.Println("Error: QWEN_API_KEY environment variable not set")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Server configuration error (missing AI API key)",
+		})
 	}
 
 	// Create the system prompt.
@@ -119,10 +186,10 @@ Format the book with proper Markdown, including headings for chapters.
 Create a compelling opening and satisfying conclusion.`, req.Title, req.Description, req.Chapters)
 
 	// Create the Qwen API request payload.
-	var qwenReq QwenAPIRequest
+	var qwenReq QwenAPIRequest // Now defined
 	qwenReq.Model = "qwen-plus"
 	qwenReq.ResultFormat = "message"
-	qwenReq.Input.Messages = []QwenMessage{
+	qwenReq.Input.Messages = []QwenMessage{ // Now defined
 		{
 			Role:    "system",
 			Content: systemPrompt,
@@ -136,6 +203,8 @@ Create a compelling opening and satisfying conclusion.`, req.Title, req.Descript
 	// Call the Qwen API.
 	bookContent, err := callQwenAPI(qwenReq, apiKey)
 	if err != nil {
+		// Log the specific error from callQwenAPI
+		log.Printf("Error calling Qwen API: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to generate book: " + err.Error(),
 		})
@@ -147,7 +216,8 @@ Create a compelling opening and satisfying conclusion.`, req.Title, req.Descript
 	})
 }
 
-func callQwenAPI(req QwenAPIRequest, apiKey string) (string, error) {
+// --- callQwenAPI function ---
+func callQwenAPI(req QwenAPIRequest, apiKey string) (string, error) { // Use defined type
 	// Marshal the request payload into JSON.
 	jsonData, err := json.Marshal(req)
 	if err != nil {
@@ -161,18 +231,23 @@ func callQwenAPI(req QwenAPIRequest, apiKey string) (string, error) {
 		return "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	// Create a context with a 5-minute timeout and attach it to the request.
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	// Create a context with a 6-minute timeout and attach it to the request.
+	ctx, cancel := context.WithTimeout(context.Background(), 360*time.Second)
 	defer cancel()
 	httpReq = httpReq.WithContext(ctx)
 
 	// Set the required headers.
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey) // Qwen API Key
 
-	client := &http.Client{Timeout: 300 * time.Second}
+	// Increased client timeout to match context
+	client := &http.Client{Timeout: 360 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		// Check for context deadline exceeded
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("request timed out after 6 minutes: %w", err)
+		}
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -184,17 +259,24 @@ func callQwenAPI(req QwenAPIRequest, apiKey string) (string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("Qwen API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse the JSON response.
-	var qwenResp QwenResponse
+	var qwenResp QwenResponse // Now defined
 	if err := json.Unmarshal(body, &qwenResp); err != nil {
-		return "", fmt.Errorf("failed to parse JSON response: %w, response body: %s", err, string(body))
+		return "", fmt.Errorf("failed to parse Qwen JSON response: %w, response body: %s", err, string(body))
 	}
 
 	if qwenResp.Output.Text == "" {
-		return "", fmt.Errorf("API returned an empty or invalid response: %+v", qwenResp)
+		// Log the full response for debugging empty text issues
+		log.Printf("Warning: Qwen API returned empty text. FinishReason: '%s'. Full response: %+v\n", qwenResp.Output.FinishReason, qwenResp)
+		finishReason := qwenResp.Output.FinishReason
+		if finishReason != "stop" && finishReason != "" {
+			return "", fmt.Errorf("API generation finished unexpectedly with reason: %s", finishReason)
+		}
+		// Consider if empty text is possible valid output or always an error
+		return "", fmt.Errorf("API returned an empty response text") // Treat as error for now
 	}
 
 	return qwenResp.Output.Text, nil
